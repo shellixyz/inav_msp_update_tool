@@ -1,0 +1,59 @@
+#!/usr/bin/env ruby
+
+require 'timeout'
+require 'crc'
+require_relative 'lib/msp/msp'
+
+if ARGV.count != 2
+    puts "usage: #$0 port firmware_file"
+    exit 1
+end
+
+port, firmware_path = ARGV
+
+msp = MSP.new port, 115200
+
+version = msp.command :fc_version
+puts "Currently running #{version.to_a.join('.')}"
+puts
+
+firmware = File.open firmware_path, 'rb'
+firmware_size_kb = firmware.size / 2**10
+
+puts "Firmware size: #{firmware_size_kb}kB"
+
+if firmware_size_kb > 960
+    puts "error: firmware file too big"
+    exit 2
+end
+
+msp.command :fwupdt_prepare, firmware.size
+
+crc = 0
+transfered = 0
+while data = firmware.read(128)
+    crc = CRC::crc8_dvb_s2 data, crc
+    msp.command :fwupdt_store, data
+    transfered += data.bytesize
+    printf "\rUploading %5.1f%%", (transfered * 100.0 / firmware.size)
+    STDOUT.flush
+end
+msp.command :fwupdt_exec, crc, expect_response: false
+puts "\nFlashing, please wait, do not disconnect power"
+
+msp.close
+sleep 15
+begin
+    Timeout.timeout(60) do
+        loop do
+            msp.reopen
+            version = msp.command :fc_version
+            puts "\nUpdate success, now running #{version.to_a.join('.')}"
+            break
+        rescue Errno::ENOENT, Errno::EACCES, MSP::ProtoError::ReadTimeout
+            sleep 0.5
+        end
+    end
+rescue Timeout::Error
+    puts "error: update timeout"
+end

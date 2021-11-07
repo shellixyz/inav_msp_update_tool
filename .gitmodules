@@ -1,0 +1,3 @@
+[submodule "lib/msp"]
+	path = lib/msp
+	url = https://github.com/shellixyz/msp-ruby
